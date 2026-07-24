@@ -122,6 +122,15 @@ config = def(config,'targetPoints',50e6);  %Target number of points for the simu
 config = def(config,'autoRes',true);  %auto adjust the resolution
 config = def(config,'maxIter',6);  %max number of iterations for the deconvolution
 config = def(config,'dvals',linspace(1,2.0,15));  %doses corresponding to different output doses, in units of dose to clear
+% layerTargets (chakramlab fork): optional vector of RELATIVE target doses
+% per output layer group (group g = input layers 2g-1 and 2g), in units of
+% dose to clear. E.g. [1.0 0.4] targets full clearing for group 1 and 40%
+% of clearing dose for group 2 (bilayer undercut regions). Empty (default)
+% reproduces the original single-target behavior exactly. When using this,
+% extend config.dvals downward to cover the lowest target (e.g.
+% linspace(0.35,2.0,15)). Overlaps between different-target shapes resolve
+% to the HIGHER target.
+config = def(config,'layerTargets',[]);
 config=def(config,'file',[]); 
 config=def(config,'psfFile',[]);
 config=def(config,'fracNum',4); %Must be >2, otherwise DIVIDEXY has problems.
@@ -432,18 +441,27 @@ totgridpts = length(xp)*length(yp);
 
 %polysbin is a 2d array that is zero except inside the polygons
 polysbin = zeros(size(XP));
+%targetbin (chakramlab fork): per-pixel RELATIVE target dose when
+%config.layerTargets is set; overlaps take the higher target.
+targetbin = zeros(size(XP));
 
 progressbar(sprintf('Creating the exposure pattern for %d polygons.',length(polygons)))
 for ip=1:length(polygons)
-    progressbar(ip/length(polygons));    
-    
+    progressbar(ip/length(polygons));
+
     [xinds,yinds]=shrinkArray(xp,yp,[polygons(ip).x,polygons(ip).y] );
-    
+
     x=round((polygons(ip).x-xp(xinds(1)))/dx);
     y=round((polygons(ip).y-yp(yinds(1)))/dx);
     subpoly=poly2mask(x',y',length(yinds),length(xinds));
     polysbin(yinds,xinds)=polysbin(yinds,xinds)+subpoly;
-    
+
+    if ~isempty(config.layerTargets)
+        grp=min(ceil(polygons(ip).layer/2),length(config.layerTargets));
+        tgt=config.layerTargets(max(grp,1));
+        targetbin(yinds,xinds)=max(targetbin(yinds,xinds),subpoly.*tgt);
+    end
+
 end
 
 [xpts ypts] = size(polysbin);
@@ -517,6 +535,7 @@ if ypad>0
     ypdisp=yp;
 elseif ypad<0
     polysbin=padarray(polysbin,[-ypad/2,0],0,'both');
+    targetbin=padarray(targetbin,[-ypad/2,0],0,'both'); %chakramlab fork
     padPoints1=padPoints-ypad/2;
     ypdisp=[((0:1:-ypad/2-1)+ypad/2).*dx+yp(1) yp ((1:1:-ypad/2).*dx+yp(end))];
 end
@@ -531,7 +550,8 @@ if xpad>0
     xpdisp=xp;
 elseif xpad<0
     polysbin=padarray(polysbin,[0,-xpad/2],0,'both');
-    padPoints2=padPoints-xpad/2; 
+    targetbin=padarray(targetbin,[0,-xpad/2],0,'both'); %chakramlab fork
+    padPoints2=padPoints-xpad/2;
     xpdisp=[((0:1:-xpad/2-1)+xpad/2).*dx+xp(1) xp ((1:1:-xpad/2).*dx+xp(end))];
 end
 
@@ -540,7 +560,13 @@ padPoints2=round(padPoints2);
 % ########## Deconvolution ##########
 
 dstart=polysbin;
-if config.overlap
+if ~isempty(config.layerTargets)
+    %chakramlab fork: per-group target doses. The deconvolution below
+    %solves dose*psf = shape, so putting the per-pixel target in shape
+    %yields two-tone (or n-tone) correction. Overlap compensation is not
+    %target-aware in this mode (overlaps already resolved to max target).
+    shape=targetbin;
+elseif config.overlap
     %1 inside shapes and 0 everywhere else. Allow overexposure.
     shape=polysbin>0;
 else
@@ -572,7 +598,11 @@ for iter=1:config.maxIter
     %The next line is needed becase we are trying to do FFT shift on an
     %array with an odd number of elements. 
     doseActual(2:end,2:end)=doseActual(1:end-1,1:end-1);
-    doseShape=doseActual.*shape; %total only given to shapes. Excludes area outside shapes. We don't actually care about this.
+    %chakramlab fork: mask with (shape>0), not shape itself -- shape now
+    %carries fractional TARGET values when layerTargets is set, and the
+    %update below must compare target against the MASKED actual dose.
+    %For binary shape this is identical to the original doseActual.*shape.
+    doseShape=doseActual.*(shape>0); %actual dose inside shapes only.
     meanDose=nanmean(doseShape(:))./mean(shape(:));
     
     figure(556); clf;
