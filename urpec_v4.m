@@ -589,10 +589,13 @@ drawnow;
 %repeat.
 meanDose=0;
 progressbar('Deconvolving');
+%chakramlab fork: fft2(psf) is constant across iterations -- hoist it.
+%Bit-identical to computing it inside the loop; ~20% less FFT work.
+psfFFT=fft2(psf);
 for iter=1:config.maxIter
     progressbar(iter/config.maxIter);
-    %convolve with the point spread function, 
-    doseActual=ifft2(fft2(doseNew).*fft2(psf)); 
+    %convolve with the point spread function,
+    doseActual=ifft2(fft2(doseNew).*psfFFT);
 
     doseActual=real(fftshift(doseActual)); 
     %The next line is needed becase we are trying to do FFT shift on an
@@ -826,6 +829,20 @@ end
 fields.dvalsAct=dvalsAct;
 fields.polygons=polygons;
 fields.ctab=ctab;
+%chakramlab fork: export the CONTINUOUS pre-quantization demand
+%histogram (0.005-wide bins) + the write-nothing pixel count, so ladder
+%design (analysis/dvals_autoladder.py) can fit the true distribution
+%instead of probe-quantized samples. doseNew here is already NaN for
+%pixels outside shapes and pixels wanting dose <= 0; 'shape' marks the
+%drawn area, so inside-shape NaNs = the zero-class mass.
+demandEdges=0:0.005:(max(doseNew(:),[],'omitnan')+0.01);
+fields.demandHistEdges=demandEdges;
+fields.demandHistCounts=histcounts(doseNew(:),demandEdges);
+%shape/doseNew unpad indices can differ by a pixel -- crop to common
+mmz=min(size(shape,1),size(doseNew,1));
+nnz2=min(size(shape,2),size(doseNew,2));
+fields.demandZeroPx=nnz(shape(1:mmz,1:nnz2)>0 & isnan(doseNew(1:mmz,1:nnz2)));
+fields.demandDx=dx;
 
 fieldsFileName=[config.outputDir filename(1:end-4) '_' descr '_fields.mat'];
 fprintf('Exporting to %s\n',fieldsFileName);
