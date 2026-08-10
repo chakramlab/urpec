@@ -663,6 +663,21 @@ demandRawCounts=histcounts(rawMaskVals,demandRawEdges);
 clear rawMaskVals;
 if ~isempty(config.demandMapWindow)
     doseNewRawS=single(doseNew);   %cropped + attached at the save section
+    %chakramlab fork: written + absorbed maps over the same window.
+    %written = per-pixel nearest-rung quantization of the demand, with
+    %demand<=0 -> 0 (the zero rung / strip_zero_dose: write nothing) --
+    %the idealized chip the writer produces (fracturing approximates it
+    %to within one rung). absorbed = written conv psf = the dose the
+    %resist actually receives, INCLUDING the spillover outside drawn
+    %shapes that the clamped-at-zero correction could not remove.
+    writtenPad=interp1(config.dvals,config.dvals,dd,'nearest','extrap');
+    writtenPad(dd<=0)=0;
+    absPad=ifft2(fft2(writtenPad).*psfFFT);
+    absPad=real(fftshift(absPad));
+    absPad(2:end,2:end)=absPad(1:end-1,1:end-1);
+    writtenMapS=single(writtenPad(padPoints1+1:end-padPoints1-1*addY,padPoints2+1:end-padPoints2-1*addX));
+    doseAbsMapS=single(absPad(padPoints1+1:end-padPoints1-1*addY,padPoints2+1:end-padPoints2-1*addX));
+    clear writtenPad absPad;
 end
 
 %This is needed to not count the dose of places that get zero or NaN dose.
@@ -877,7 +892,9 @@ if ~isempty(config.demandMapWindow)
     fields.demandMap=doseNewRawS(iyw,ixw);
     fields.demandMapX=xpold(ixw);
     fields.demandMapY=ypold(iyw);
-    clear doseNewRawS;
+    fields.writtenMap=writtenMapS(iyw,ixw);
+    fields.doseAbsMap=doseAbsMapS(iyw,ixw);
+    clear doseNewRawS writtenMapS doseAbsMapS;
 end
 
 fieldsFileName=[config.outputDir filename(1:end-4) '_' descr '_fields.mat'];
