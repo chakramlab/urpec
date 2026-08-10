@@ -131,7 +131,11 @@ config = def(config,'dvals',linspace(1,2.0,15));  %doses corresponding to differ
 % linspace(0.35,2.0,15)). Overlaps between different-target shapes resolve
 % to the HIGHER target.
 config = def(config,'layerTargets',[]);
-config=def(config,'file',[]); 
+% demandMapWindow (chakramlab fork): [x0 x1 y0 y1] in um -- export the
+% CONTINUOUS raw demand map (negatives included, single precision) over
+% this window into fields.demandMap/-X/-Y. Empty (default) = no map.
+config = def(config,'demandMapWindow',[]);
+config=def(config,'file',[]);
 config=def(config,'psfFile',[]);
 config=def(config,'fracNum',4); %Must be >2, otherwise DIVIDEXY has problems.
 config=def(config,'fracSize',2);
@@ -643,6 +647,24 @@ shape=ss(padPoints1+1:end-padPoints1-1,padPoints2+1:end-padPoints2-1);
 mp=size(doseNew,1);
 np=size(doseNew,2);
 
+%chakramlab fork: capture the RAW demand (negatives included) BEFORE
+%the NaN-ing below discards it. doseNew is exactly 0 outside shapes and
+%carries the true (possibly negative) programmed-dose demand inside, so
+%the inside-shape mask is shape>0. Exports attached at the save section:
+%  demandRawHist*  full-range histogram incl. the negative tail
+%  demandMap       optional windowed continuous map (single precision),
+%                  config.demandMapWindow = [x0 x1 y0 y1] in um
+mmr=min(size(shape,1),size(doseNew,1));
+nnr=min(size(shape,2),size(doseNew,2));
+rawMaskVals=doseNew(1:mmr,1:nnr);
+rawMaskVals=rawMaskVals(shape(1:mmr,1:nnr)>0);
+demandRawEdges=(floor(min(rawMaskVals)/0.005)*0.005):0.005:(max(rawMaskVals)+0.01);
+demandRawCounts=histcounts(rawMaskVals,demandRawEdges);
+clear rawMaskVals;
+if ~isempty(config.demandMapWindow)
+    doseNewRawS=single(doseNew);   %cropped + attached at the save section
+end
+
 %This is needed to not count the dose of places that get zero or NaN dose.
 try
     doseNew(doseNew==0)=NaN;
@@ -843,6 +865,20 @@ mmz=min(size(shape,1),size(doseNew,1));
 nnz2=min(size(shape,2),size(doseNew,2));
 fields.demandZeroPx=nnz(shape(1:mmz,1:nnz2)>0 & isnan(doseNew(1:mmz,1:nnz2)));
 fields.demandDx=dx;
+%raw (negative-preserving) exports captured before the NaN step
+fields.demandRawHistEdges=demandRawEdges;
+fields.demandRawHistCounts=demandRawCounts;
+if ~isempty(config.demandMapWindow)
+    w=config.demandMapWindow;
+    ixw=find(xpold>=w(1) & xpold<=w(2));
+    iyw=find(ypold>=w(3) & ypold<=w(4));
+    ixw=ixw(ixw<=size(doseNewRawS,2));
+    iyw=iyw(iyw<=size(doseNewRawS,1));
+    fields.demandMap=doseNewRawS(iyw,ixw);
+    fields.demandMapX=xpold(ixw);
+    fields.demandMapY=ypold(iyw);
+    clear doseNewRawS;
+end
 
 fieldsFileName=[config.outputDir filename(1:end-4) '_' descr '_fields.mat'];
 fprintf('Exporting to %s\n',fieldsFileName);
