@@ -677,7 +677,14 @@ if ~isempty(config.demandMapWindow)
     absPad(2:end,2:end)=absPad(1:end-1,1:end-1);
     writtenMapS=single(writtenPad(padPoints1+1:end-padPoints1-1*addY,padPoints2+1:end-padPoints2-1*addX));
     doseAbsMapS=single(absPad(padPoints1+1:end-padPoints1-1*addY,padPoints2+1:end-padPoints2-1*addX));
-    clear writtenPad absPad;
+    %counterfactual: absorbed dose IF the writer could write the raw
+    %demand, negatives included -- the deconvolution's own solution, so
+    %this should be flat per tone; actual minus ideal = the clamp cost.
+    idealPad=ifft2(fft2(dd).*psfFFT);
+    idealPad=real(fftshift(idealPad));
+    idealPad(2:end,2:end)=idealPad(1:end-1,1:end-1);
+    doseAbsIdealS=single(idealPad(padPoints1+1:end-padPoints1-1*addY,padPoints2+1:end-padPoints2-1*addX));
+    clear writtenPad absPad idealPad;
 end
 
 %This is needed to not count the dose of places that get zero or NaN dose.
@@ -894,7 +901,8 @@ if ~isempty(config.demandMapWindow)
     fields.demandMapY=ypold(iyw);
     fields.writtenMap=writtenMapS(iyw,ixw);
     fields.doseAbsMap=doseAbsMapS(iyw,ixw);
-    clear doseNewRawS writtenMapS doseAbsMapS;
+    fields.doseAbsIdealMap=doseAbsIdealS(iyw,ixw);
+    clear doseNewRawS writtenMapS doseAbsMapS doseAbsIdealS;
 end
 
 fieldsFileName=[config.outputDir filename(1:end-4) '_' descr '_fields.mat'];
