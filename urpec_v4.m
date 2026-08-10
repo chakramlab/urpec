@@ -135,6 +135,21 @@ config = def(config,'layerTargets',[]);
 % CONTINUOUS raw demand map (negatives included, single precision) over
 % this window into fields.demandMap/-X/-Y. Empty (default) = no map.
 config = def(config,'demandMapWindow',[]);
+
+% nonNeg (chakramlab fork): projected iteration -- clamp doseNew at 0
+% after every deconvolution update (projected Landweber / NNLS-style),
+% so the solver never relies on unwritable negative dose. For sub-max
+% tones (undercut) the error is ONE-SIDED: absorbed anywhere in
+% [target, bandMax] counts as zero error (undercut needs >= target but
+% must stay below clearing; exact equality is neither needed nor
+% achievable next to high-dose features). bandMax is in relative-dose
+% units; 0.75 sits below the worst clearing threshold of a D0 260-440
+% sweep against a 340 uC/cm2 dose-to-clear (340/440 = 0.773).
+config = def(config,'nonNeg',0);
+config = def(config,'bandMax',0.75);
+% fileSuffix: appended to every output base name so variant runs can
+% share one folder without clobbering each other (e.g. '_nn').
+config = def(config,'fileSuffix','');
 config=def(config,'file',[]);
 config=def(config,'psfFile',[]);
 config=def(config,'fracNum',4); %Must be >2, otherwise DIVIDEXY has problems.
@@ -610,7 +625,14 @@ for iter=1:config.maxIter
     %update below must compare target against the MASKED actual dose.
     %For binary shape this is identical to the original doseActual.*shape.
     doseShape=doseActual.*(shape>0); %actual dose inside shapes only.
-    meanDose=nanmean(doseShape(:))./mean(shape(:));
+    if config.nonNeg
+        %chakramlab fork: convergence reported on the max-target
+        %(clearing) tone only -- band-tone error is unreachable by
+        %design and would poison the metric.
+        meanDose=nanmean(doseShape(shape==max(shape(:))))./max(shape(:));
+    else
+        meanDose=nanmean(doseShape(:))./mean(shape(:));
+    end
     
     figure(556); clf;
     subplot(1,2,2);
@@ -621,7 +643,20 @@ for iter=1:config.maxIter
     colormap('jet');
     colorbar;
     
-    doseNew=doseNew+1.2*(shape-doseShape); %Deonvolution: add the difference between the desired dose and the actual dose to doseShape, defined above
+    if config.nonNeg
+        %chakramlab fork: one-sided band error for sub-max tones, then
+        %project onto the writable set (dose >= 0).
+        tmax=max(shape(:));
+        err=shape-doseShape;
+        isBand=(shape>0)&(shape<tmax);
+        err(isBand & doseShape>=shape & doseShape<=config.bandMax)=0;
+        over=isBand & doseShape>config.bandMax;
+        err(over)=config.bandMax-doseShape(over);
+        doseNew=doseNew+1.2*err;
+        doseNew=max(doseNew,0);
+    else
+        doseNew=doseNew+1.2*(shape-doseShape); %Deonvolution: add the difference between the desired dose and the actual dose to doseShape, defined above
+    end
     subplot(1,2,1);
     imagesc(xpdisp,ypdisp,doseNew);
     title(sprintf('Programmed dose. Iteration %d',iter));
@@ -800,7 +835,7 @@ dvalsAct=dvals;
 %save the final files
 fields=struct();
 
-outputFileName=[config.outputDir filename(1:end-4) '_' descr '.dxf'];
+outputFileName=[config.outputDir filename(1:end-4) '_' descr config.fileSuffix '.dxf'];
 
 if config.savedxf
     fprintf('Exporting to %s\n',outputFileName);
@@ -853,16 +888,16 @@ if config.savedxf
 end
 
 if config.savedc2
-    fields.cadFile=[filename(1:end-4) '_' descr '.dc2']; %used by NPGS
-    dc2FileName=[config.outputDir filename(1:end-4) '_' descr '.dc2'];
+    fields.cadFile=[filename(1:end-4) '_' descr config.fileSuffix '.dc2']; %used by NPGS
+    dc2FileName=[config.outputDir filename(1:end-4) '_' descr config.fileSuffix '.dc2'];
     fprintf('Exporting to %s\n',dc2FileName);
     dc2write(polygons,dc2FileName);
 end
 
 %Save doses here
 if config.savedose
-    fields.doseFile=[filename(1:end-4) '_' descr '.txt'];
-    doseFileName=[config.outputDir filename(1:end-4) '_' descr '.txt'];
+    fields.doseFile=[filename(1:end-4) '_' descr config.fileSuffix '.txt'];
+    doseFileName=[config.outputDir filename(1:end-4) '_' descr config.fileSuffix '.txt'];
     fprintf('Exporting to %s\n',doseFileName);
     fileID = fopen(doseFileName,'w');
     fprintf(fileID,'%3.3f \r\n',dvalsAct);
@@ -905,7 +940,7 @@ if ~isempty(config.demandMapWindow)
     clear doseNewRawS writtenMapS doseAbsMapS doseAbsIdealS;
 end
 
-fieldsFileName=[config.outputDir filename(1:end-4) '_' descr '_fields.mat'];
+fieldsFileName=[config.outputDir filename(1:end-4) '_' descr config.fileSuffix '_fields.mat'];
 fprintf('Exporting to %s\n',fieldsFileName);
 try
     save(fieldsFileName,'fields');
