@@ -191,6 +191,16 @@ config = def(config,'bandSlope',0.1);
 % develop-T drift spend the same slack budget; the drift reserve is
 % the operating-column overdose (todo.txt, deadband entry).
 config = def(config,'clearBand',0.021);
+% useGPU (v5): run the deconvolution + gradient loops on a CUDA device
+% (gpuArray operands make fft2/ifft2/max execute there transparently).
+% Needs Parallel Computing Toolbox + a card with ~8 GB free for our
+% 50e6-point grids (16 GB comfortable); falls back to CPU with a
+% warning if unavailable. Everything is gathered back before
+% fracturing/exports, so results are numerically equivalent to CPU up
+% to FFT reduction order (harmless at 1%-rung quantization). Per-iter
+% diagnostic figures are drawn only on the LAST iteration in GPU mode
+% (each draw would round-trip the array over PCIe).
+config = def(config,'useGPU',0);
 % fileSuffix: appended to every output base name so variant runs can
 % share one folder without clobbering each other (e.g. '_nn').
 config = def(config,'fileSuffix','');
@@ -655,6 +665,18 @@ progressbar('Deconvolving');
 %chakramlab fork: fft2(psf) is constant across iterations -- hoist it.
 %Bit-identical to computing it inside the loop; ~20% less FFT work.
 psfFFT=fft2(psf);
+if config.useGPU
+    try
+        gpuDevice;
+        psfFFT=gpuArray(psfFFT);
+        doseNew=gpuArray(doseNew);
+        shape=gpuArray(shape);
+    catch gpuErr
+        warning('useGPU requested but unavailable (%s) -- CPU path.',...
+            gpuErr.message);
+        config.useGPU=0;
+    end
+end
 for iter=1:config.maxIter
     progressbar(iter/config.maxIter);
     %convolve with the point spread function,
@@ -678,15 +700,18 @@ for iter=1:config.maxIter
         meanDose=nanmean(doseShape(:))./mean(shape(:));
     end
     
-    figure(556); clf;
-    subplot(1,2,2);
-    imagesc(xpdisp,ypdisp,doseActual);
-    title(sprintf('Actual dose. Iteration %d',iter));
-    set(gca,'YDir','norm');
-    caxis([0,max(config.dvals)]);
-    colormap('jet');
-    colorbar;
-    
+    showFig = ~config.useGPU || iter==config.maxIter;
+    if showFig
+        figure(556); clf;
+        subplot(1,2,2);
+        imagesc(xpdisp,ypdisp,doseActual);
+        title(sprintf('Actual dose. Iteration %d',iter));
+        set(gca,'YDir','norm');
+        caxis([0,max(config.dvals)]);
+        colormap('jet');
+        colorbar;
+    end
+
     if config.nonNeg
         %chakramlab fork: plain residual + projection onto the writable
         %set (dose >= 0). See the nonNeg config comment.
@@ -701,13 +726,15 @@ for iter=1:config.maxIter
     else
         doseNew=doseNew+1.2*(shape-doseShape); %Deonvolution: add the difference between the desired dose and the actual dose to doseShape, defined above
     end
-    subplot(1,2,1);
-    imagesc(xpdisp,ypdisp,doseNew);
-    title(sprintf('Programmed dose. Iteration %d',iter));
-    set(gca,'YDir','norm');
-    caxis([0,max(config.dvals)]);
-    colormap('jet');
-    colorbar;
+    if showFig
+        subplot(1,2,1);
+        imagesc(xpdisp,ypdisp,doseNew);
+        title(sprintf('Programmed dose. Iteration %d',iter));
+        set(gca,'YDir','norm');
+        caxis([0,max(config.dvals)]);
+        colormap('jet');
+        colorbar;
+    end
 
     drawnow;
     
@@ -727,8 +754,9 @@ if config.gradSolver
         isBand=(shape>0)&(shape<tmax);
         isOut=(shape==0);
         %per-pixel weights: 1 everywhere, overridden by weightFile polys
-        %(rasterized on THIS padded grid, mirroring the CAD poly2mask)
-        wmap=ones(size(doseNew));
+        %(rasterized on THIS padded grid, mirroring the CAD poly2mask).
+        %'like' keeps it on the GPU when useGPU is on.
+        wmap=ones(size(doseNew),'like',doseNew);
         if ~isempty(config.weightFile)
             WS=load(config.weightFile);
             for kw=1:numel(WS.w)
@@ -752,7 +780,7 @@ if config.gradSolver
             % clearing: must reach tmax; overshoot costs overBeta
             % undercut: must reach its target; bandCeil caps it
             % outside:  bandCeil caps it (the width-overflow term)
-            dphi=zeros(size(a));
+            dphi=zeros(size(a),'like',a);
             cb=(1-config.clearBand)*tmax;
             dphi(isClear)=-2*max(0,cb-a(isClear)) ...
                 +2*config.overBeta*max(0,a(isClear)-tmax) ...
@@ -768,13 +796,20 @@ if config.gradSolver
             if mod(it,10)==0 || it==config.gradIters
                 fprintf(['grad %3d: clearing %10.1f  ucLow %10.1f  ' ...
                     'ceiling %10.1f\n'],it,...
-                    sum(max(0,cb-a(isClear)).^2,'all'),...
-                    sum(max(0,shape(isBand)-a(isBand)).^2,'all'),...
-                    sum(max(0,a(isBand)-config.bandCeil).^2,'all') ...
-                    +sum(max(0,a(isOut)-config.bandCeil).^2,'all'));
+                    gather(sum(max(0,cb-a(isClear)).^2,'all')),...
+                    gather(sum(max(0,shape(isBand)-a(isBand)).^2,'all')),...
+                    gather(sum(max(0,a(isBand)-config.bandCeil).^2,'all') ...
+                    +sum(max(0,a(isOut)-config.bandCeil).^2,'all')));
             end
         end
     end
+end
+
+%v5 GPU path ends here: everything downstream (fracturing, exports)
+%stays on the CPU. gather() is a no-op cost next to the loops above.
+if config.useGPU
+    doseNew=gather(doseNew);
+    shape=gather(shape);
 end
 
 dd=doseNew;
