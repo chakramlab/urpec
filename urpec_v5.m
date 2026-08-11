@@ -176,6 +176,12 @@ config = def(config,'overBeta',0.25);
 config = def(config,'bandCeil',0.80);
 config = def(config,'outW',1.0);
 config = def(config,'weightFile','');
+% bandSlope: gentle constant pull toward the target for undercut pixels
+% sitting ABOVE it but inside the band -- the minimal-dose principle.
+% Without it the penalty is flat between target and bandCeil and the
+% solver leaves free dose in place (the v1 do-nothing-zone lesson,
+% 2026-08-11, now applied to the gradient objective).
+config = def(config,'bandSlope',0.1);
 % fileSuffix: appended to every output base name so variant runs can
 % share one folder without clobbering each other (e.g. '_nn').
 config = def(config,'fileSuffix','');
@@ -741,7 +747,8 @@ if config.gradSolver
             dphi(isClear)=-2*max(0,tmax-a(isClear)) ...
                 +2*config.overBeta*max(0,a(isClear)-tmax);
             dphi(isBand)=-2*max(0,shape(isBand)-a(isBand)) ...
-                +2*max(0,a(isBand)-config.bandCeil);
+                +2*max(0,a(isBand)-config.bandCeil) ...
+                +config.bandSlope*(a(isBand)>shape(isBand));
             dphi(isOut)=2*config.outW*max(0,a(isOut)-config.bandCeil);
             g=ifft2(fft2(wmap.*dphi).*psfFFT);
             g=real(fftshift(g));
