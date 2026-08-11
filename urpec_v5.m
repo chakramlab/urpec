@@ -182,6 +182,15 @@ config = def(config,'weightFile','');
 % solver leaves free dose in place (the v1 do-nothing-zone lesson,
 % 2026-08-11, now applied to the gradient objective).
 config = def(config,'bandSlope',0.1);
+% clearBand: contrast-derived DEADBAND on the clearing tone -- absorbed
+% within clearBand of the target counts as cleared, because finite
+% developer contrast clears slightly-under doses too. delta =
+% 1 - 10^(-t_scum/gamma): 0.021 at gamma 5.4 (Rooks, interpolated to
+% 6.0 C) with 5% tolerable scum. The corridor gets the same bandSlope
+% drain (no flat zones -- lesson learned twice). NOTE the corridor and
+% develop-T drift spend the same slack budget; the drift reserve is
+% the operating-column overdose (todo.txt, deadband entry).
+config = def(config,'clearBand',0.021);
 % fileSuffix: appended to every output base name so variant runs can
 % share one folder without clobbering each other (e.g. '_nn').
 config = def(config,'fileSuffix','');
@@ -744,8 +753,10 @@ if config.gradSolver
             % undercut: must reach its target; bandCeil caps it
             % outside:  bandCeil caps it (the width-overflow term)
             dphi=zeros(size(a));
-            dphi(isClear)=-2*max(0,tmax-a(isClear)) ...
-                +2*config.overBeta*max(0,a(isClear)-tmax);
+            cb=(1-config.clearBand)*tmax;
+            dphi(isClear)=-2*max(0,cb-a(isClear)) ...
+                +2*config.overBeta*max(0,a(isClear)-tmax) ...
+                +config.bandSlope*(a(isClear)>cb);
             dphi(isBand)=-2*max(0,shape(isBand)-a(isBand)) ...
                 +2*max(0,a(isBand)-config.bandCeil) ...
                 +config.bandSlope*(a(isBand)>shape(isBand));
@@ -757,7 +768,7 @@ if config.gradSolver
             if mod(it,10)==0 || it==config.gradIters
                 fprintf(['grad %3d: clearing %10.1f  ucLow %10.1f  ' ...
                     'ceiling %10.1f\n'],it,...
-                    sum(max(0,tmax-a(isClear)).^2,'all'),...
+                    sum(max(0,cb-a(isClear)).^2,'all'),...
                     sum(max(0,shape(isBand)-a(isBand)).^2,'all'),...
                     sum(max(0,a(isBand)-config.bandCeil).^2,'all') ...
                     +sum(max(0,a(isOut)-config.bandCeil).^2,'all'));
