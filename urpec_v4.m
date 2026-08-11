@@ -701,6 +701,12 @@ demandRawCounts=histcounts(rawMaskVals,demandRawEdges);
 clear rawMaskVals;
 if ~isempty(config.demandMapWindow)
     doseNewRawS=single(doseNew);   %cropped + attached at the save section
+    %targetMap: the PRE-BLUR tone ground truth (targetbin unpadded --
+    %exact per-pixel target values, razor-sharp edges straight from the
+    %polygons). The fitness checks need it for exact tone masks; the
+    %ideal-absorbed map is PSF-blurred at every boundary. With
+    %layerTargets unset this is just the binary/overlap shape.
+    targetMapS=single(shape);
     %chakramlab fork: written + absorbed maps over the same window.
     %written = per-pixel nearest-rung quantization of the demand, with
     %demand<=0 -> 0 (the zero rung / strip_zero_dose: write nothing) --
@@ -940,7 +946,11 @@ if ~isempty(config.demandMapWindow)
     fields.writtenMap=writtenMapS(iyw,ixw);
     fields.doseAbsMap=doseAbsMapS(iyw,ixw);
     fields.doseAbsIdealMap=doseAbsIdealS(iyw,ixw);
-    clear doseNewRawS writtenMapS doseAbsMapS doseAbsIdealS;
+    %shape's unpad indices can differ from doseNew's by a pixel
+    iywT=iyw(iyw<=size(targetMapS,1));
+    ixwT=ixw(ixw<=size(targetMapS,2));
+    fields.targetMap=targetMapS(iywT,ixwT);
+    clear doseNewRawS writtenMapS doseAbsMapS doseAbsIdealS targetMapS;
 end
 
 fieldsFileName=[config.outputDir filename(1:end-4) '_' descr config.fileSuffix '_fields.mat'];
