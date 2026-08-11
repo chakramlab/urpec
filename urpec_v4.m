@@ -137,16 +137,19 @@ config = def(config,'layerTargets',[]);
 config = def(config,'demandMapWindow',[]);
 
 % nonNeg (chakramlab fork): projected iteration -- clamp doseNew at 0
-% after every deconvolution update (projected Landweber / NNLS-style),
-% so the solver never relies on unwritable negative dose. For sub-max
-% tones (undercut) the error is ONE-SIDED: absorbed anywhere in
-% [target, bandMax] counts as zero error (undercut needs >= target but
-% must stay below clearing; exact equality is neither needed nor
-% achievable next to high-dose features). bandMax is in relative-dose
-% units; 0.75 sits below the worst clearing threshold of a D0 260-440
-% sweep against a 340 uC/cm2 dose-to-clear (340/440 = 0.773).
+% after every update, plain residual everywhere. Updates are pointwise
+% (Van Cittert), so pixels with unreachable targets (undercut flanks
+% blanketed by a neighbor's spillover) simply pin at the floor without
+% dragging anything else; every reachable pixel is driven exactly to
+% its target, which is also the MINIMAL writable dose there. (A
+% band/zero-error variant existed briefly on 2026-08-11 and was
+% removed: it froze feasible pixels at their initialization value.)
+% relErr=1 additionally scales each pixel's update by 1/target, capped
+% at gain 1.8 (fixed-point stability needs gain < 2), so sub-max tones
+% descend at comparable FRACTIONAL rates -- the log-loss idea
+% translated to this iteration.
 config = def(config,'nonNeg',0);
-config = def(config,'bandMax',0.75);
+config = def(config,'relErr',0);
 % fileSuffix: appended to every output base name so variant runs can
 % share one folder without clobbering each other (e.g. '_nn').
 config = def(config,'fileSuffix','');
@@ -644,15 +647,15 @@ for iter=1:config.maxIter
     colorbar;
     
     if config.nonNeg
-        %chakramlab fork: one-sided band error for sub-max tones, then
-        %project onto the writable set (dose >= 0).
-        tmax=max(shape(:));
+        %chakramlab fork: plain residual + projection onto the writable
+        %set (dose >= 0). See the nonNeg config comment.
         err=shape-doseShape;
-        isBand=(shape>0)&(shape<tmax);
-        err(isBand & doseShape>=shape & doseShape<=config.bandMax)=0;
-        over=isBand & doseShape>config.bandMax;
-        err(over)=config.bandMax-doseShape(over);
-        doseNew=doseNew+1.2*err;
+        if config.relErr
+            gain=min(1.2./max(shape,1e-6),1.8);
+            doseNew=doseNew+gain.*err;
+        else
+            doseNew=doseNew+1.2*err;
+        end
         doseNew=max(doseNew,0);
     else
         doseNew=doseNew+1.2*(shape-doseShape); %Deonvolution: add the difference between the desired dose and the actual dose to doseShape, defined above
