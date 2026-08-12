@@ -667,10 +667,15 @@ progressbar('Deconvolving');
 psfFFT=fft2(psf);
 if config.useGPU
     try
-        gpuDevice;
+        gd=gpuDevice;
         psfFFT=gpuArray(psfFFT);
         doseNew=gpuArray(doseNew);
         shape=gpuArray(shape);
+        %loud on purpose: a silent CPU fallback once produced a run that
+        %LOOKED like a GPU benchmark (2026-08-11) -- the path taken must
+        %be unmissable in every log
+        fprintf('*** GPU PATH ACTIVE: %s, %.1f GB free ***\n',...
+            gd.Name, gd.AvailableMemory/2^30);
     catch gpuErr
         warning('useGPU requested but unavailable (%s) -- CPU path.',...
             gpuErr.message);
