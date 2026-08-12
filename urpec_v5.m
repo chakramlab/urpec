@@ -201,6 +201,16 @@ config = def(config,'clearBand',0.021);
 % diagnostic figures are drawn only on the LAST iteration in GPU mode
 % (each draw would round-trip the array over PCIe).
 config = def(config,'useGPU',0);
+% edgeFree (v5, experiment 2026-08-12): erode the clearing tone's
+% penalty mask by edgeFree pixels -- the drawn boundary ring becomes
+% DON'T-CARE in the gradient objective. Rationale: holding absorbed >=
+% threshold at the last drawn pixel through the PSF forces ~2x written
+% edge spikes (the M-profile burrs) whose outward lobes are the width
+% overflow. The ring's written dose still serves the interior's
+% clearing (no parking pathology: its dose is pulled by neighbors'
+% penalties, not its own). Trade: drawn width no longer equals target
+% width -- erosion is a designed pre-bias.
+config = def(config,'edgeFree',0);
 % fileSuffix: appended to every output base name so variant runs can
 % share one folder without clobbering each other (e.g. '_nn').
 config = def(config,'fileSuffix','');
@@ -758,6 +768,12 @@ if config.gradSolver
         isClear=(shape==tmax)&(shape>0);
         isBand=(shape>0)&(shape<tmax);
         isOut=(shape==0);
+        if config.edgeFree>0
+            %peel the boundary ring off the clearing penalty mask; the
+            %ring joins no other mask (don't-care -- see config note)
+            isClear=imerode(isClear,...
+                ones(2*config.edgeFree+1));
+        end
         %per-pixel weights: 1 everywhere, overridden by weightFile polys
         %(rasterized on THIS padded grid, mirroring the CAD poly2mask).
         %'like' keeps it on the GPU when useGPU is on.
