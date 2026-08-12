@@ -807,9 +807,14 @@ end
 
 %v5 GPU path ends here: everything downstream (fracturing, exports)
 %stays on the CPU. gather() is a no-op cost next to the loops above.
+%psfFFT must come home too: the windowed-export convolutions reuse it,
+%and a gpuArray operand would silently turn doseAbsMap/doseAbsIdealMap
+%into gpuArray handles in the saved fields.mat (caught by Eddie's farm
+%run, 2026-08-11 -- scipy could not read the maps).
 if config.useGPU
     doseNew=gather(doseNew);
     shape=gather(shape);
+    psfFFT=gather(psfFFT);
 end
 
 dd=doseNew;
