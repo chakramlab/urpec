@@ -145,7 +145,10 @@ config = def(config,'layerTargets',[]);
 config = def(config,'demandMapWindow',[]);
 
 % nonNeg (chakramlab fork): projected iteration -- clamp doseNew at 0
-% after every update, plain residual everywhere. Updates are pointwise
+% after every update, plain residual everywhere. In the literature:
+% Van Cittert constrained to physical bounds each pass is JANSSON'S
+% METHOD (Jansson, 1970s spectroscopy); equivalently a projected
+% Landweber iteration. Updates are pointwise
 % (Van Cittert), so pixels with unreachable targets (undercut flanks
 % blanketed by a neighbor's spillover) simply pin at the floor without
 % dragging anything else; every reachable pixel is driven exactly to
