@@ -221,6 +221,18 @@ config = def(config,'edgeFree',0);
 % deadband made convergence detectable by removing the unreachable
 % edge pixels from the residual).
 config = def(config,'gradTol',0);
+% vcTol (2026-08-12): ADAPTIVE STOPPING for the Van Cittert warm-start
+% loop, the analog of gradTol. The loop already computes meanDose (mean
+% actual/target on the clearing tone) every iteration; stop when it
+% moves less than vcTol (absolute, on that ratio) over a 5-iteration
+% window, floor 10. 0 = disabled (fixed maxIter, historical behavior).
+% Motivation (Agrim): probes run PLAIN VC -- no gradient solver cleans
+% up after them -- and the ladder is fit to their demand histograms;
+% fine-feature modes converge slowest, so an unconverged VC probe is
+% systematically soft exactly at the ladder's top end. The loop now
+% also PRINTS meanDose each iteration so convergence is auditable from
+% batch logs either way.
+config = def(config,'vcTol',0);
 % fileSuffix: appended to every output base name so variant runs can
 % share one folder without clobbering each other (e.g. '_nn').
 config = def(config,'fileSuffix','');
@@ -724,7 +736,16 @@ for iter=1:config.maxIter
     else
         meanDose=nanmean(doseShape(:))./mean(shape(:));
     end
-    
+    %chakramlab fork (vcTol): audit trace + adaptive stop, see config
+    vcHist(iter)=gather(meanDose); %#ok<AGROW>
+    fprintf('vc %3d: meanDose %.6f\n', iter, vcHist(iter));
+    if config.vcTol>0 && iter>=10 && ...
+            abs(vcHist(iter)-vcHist(iter-5))<config.vcTol
+        fprintf('vc CONVERGED at %d (d5 %.2e < vcTol %.1e)\n', iter, ...
+            abs(vcHist(iter)-vcHist(iter-5)), config.vcTol);
+        break
+    end
+
     showFig = ~config.useGPU || iter==config.maxIter;
     if showFig
         figure(556); clf;
