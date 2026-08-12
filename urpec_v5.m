@@ -1109,6 +1109,10 @@ if config.savedose
 end
 
 %Save all of the information in a .mat file for later.
+%v5: the full config rides with the results -- a number carries its
+%provenance (docs/metrics_and_goodhart.md), and the fitness checks
+%need to know WHICH solver produced a fields.mat to grade it fairly.
+fields.solverConfig=config;
 fields.dvalsAct=dvalsAct;
 fields.polygons=polygons;
 fields.ctab=ctab;
