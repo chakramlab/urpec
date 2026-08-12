@@ -270,12 +270,12 @@ else
     
 end
 
-pathname=[pathname '\'];
+pathname=[pathname filesep];   %filesep, not '\' -- the cluster runs Linux
 filename=[filename ext];
 
 config=def(config,'outputDir',pathname);
-if config.outputDir(end)~='\'
-    config.outputDir=[config.outputDir '\'];
+if config.outputDir(end)~=filesep && config.outputDir(end)~='/'
+    config.outputDir=[config.outputDir filesep];
 end
 
 % ########## Load pattern from .dxf ##########
