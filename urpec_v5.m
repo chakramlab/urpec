@@ -802,6 +802,7 @@ if config.gradSolver
         end
         eta=config.etaGrad./max(wmap(:));
         Vhist=zeros(1,config.gradIters);
+        Dhist=zeros(1,config.gradIters);
         progressbar('Gradient refinement');
         for it=1:config.gradIters
             progressbar(it/config.gradIters);
@@ -830,16 +831,27 @@ if config.gradSolver
             vX=gather(sum(max(0,a(isBand)-config.bandCeil).^2,'all') ...
                 +sum(max(0,a(isOut)-config.bandCeil).^2,'all'));
             Vhist(it)=vC+vB+vX;
+            %drain mass: written dose sitting in over-ceiling band/out
+            %pixels (the reducible reservoir). Its FLATNESS joins the
+            %stop test -- the bandSlope drain is a preference, not a
+            %violation, so V alone can flatline mid-drain (seen on the
+            %u>=0.28 grid rows, 2026-08-12).
+            Dhist(it)=gather(sum(doseNew((a>config.bandCeil)& ...
+                (isBand|isOut)),'all'));
             if mod(it,10)==0 || it==config.gradIters
                 fprintf(['grad %3d: clearing %10.1f  ucLow %10.1f  ' ...
-                    'ceiling %10.1f\n'],it,vC,vB,vX);
+                    'ceiling %10.1f  drain %10.1f\n'],it,vC,vB,vX,...
+                    Dhist(it));
             end
-            if config.gradTol>0 && it>=40
+            if config.gradTol>0 && it>=20
                 dV=abs(Vhist(it)-Vhist(it-10));
-                if dV<config.gradTol*max(Vhist(it),1)
+                dD=abs(Dhist(it)-Dhist(it-10));
+                if dV<config.gradTol*max(Vhist(it),1) && ...
+                        dD<config.gradTol*max(Dhist(it),1)
                     fprintf(['grad: CONVERGED at iter %d ' ...
-                        '(dV/V = %.2e over 10 iters)\n'],it,...
-                        dV/max(Vhist(it),1));
+                        '(dV/V = %.2e, dDrain/D = %.2e over 10 ' ...
+                        'iters)\n'],it,dV/max(Vhist(it),1),...
+                        dD/max(Dhist(it),1));
                     break;
                 end
             end
