@@ -211,6 +211,16 @@ config = def(config,'useGPU',0);
 % penalties, not its own). Trade: drawn width no longer equals target
 % width -- erosion is a designed pre-bias.
 config = def(config,'edgeFree',0);
+% gradTol (2026-08-12): ADAPTIVE STOPPING for the gradient loop. Stop
+% when the total violation changes by less than gradTol (relative)
+% over a 10-iteration window; gradIters demotes to a safety cap.
+% 0 = disabled (fixed budget, pre-08-12 behavior). Calibration from
+% the logged runs: converged plateaus drift ~0.1-0.2%/10 it, active
+% descent runs ~1-5%/10 it -- 1e-3 separates them cleanly (v3a shipped
+% 40% short of its fixed point under a fixed 60-iteration budget; the
+% deadband made convergence detectable by removing the unreachable
+% edge pixels from the residual).
+config = def(config,'gradTol',0);
 % fileSuffix: appended to every output base name so variant runs can
 % share one folder without clobbering each other (e.g. '_nn').
 config = def(config,'fileSuffix','');
@@ -791,6 +801,7 @@ if config.gradSolver
                 numel(WS.w),min(WS.w),max(WS.w));
         end
         eta=config.etaGrad./max(wmap(:));
+        Vhist=zeros(1,config.gradIters);
         progressbar('Gradient refinement');
         for it=1:config.gradIters
             progressbar(it/config.gradIters);
@@ -814,13 +825,23 @@ if config.gradSolver
             g=real(fftshift(g));
             g(2:end,2:end)=g(1:end-1,1:end-1);
             doseNew=max(doseNew-eta.*g,0);
+            vC=gather(sum(max(0,cb-a(isClear)).^2,'all'));
+            vB=gather(sum(max(0,shape(isBand)-a(isBand)).^2,'all'));
+            vX=gather(sum(max(0,a(isBand)-config.bandCeil).^2,'all') ...
+                +sum(max(0,a(isOut)-config.bandCeil).^2,'all'));
+            Vhist(it)=vC+vB+vX;
             if mod(it,10)==0 || it==config.gradIters
                 fprintf(['grad %3d: clearing %10.1f  ucLow %10.1f  ' ...
-                    'ceiling %10.1f\n'],it,...
-                    gather(sum(max(0,cb-a(isClear)).^2,'all')),...
-                    gather(sum(max(0,shape(isBand)-a(isBand)).^2,'all')),...
-                    gather(sum(max(0,a(isBand)-config.bandCeil).^2,'all') ...
-                    +sum(max(0,a(isOut)-config.bandCeil).^2,'all')));
+                    'ceiling %10.1f\n'],it,vC,vB,vX);
+            end
+            if config.gradTol>0 && it>=40
+                dV=abs(Vhist(it)-Vhist(it-10));
+                if dV<config.gradTol*max(Vhist(it),1)
+                    fprintf(['grad: CONVERGED at iter %d ' ...
+                        '(dV/V = %.2e over 10 iters)\n'],it,...
+                        dV/max(Vhist(it),1));
+                    break;
+                end
             end
         end
     end
