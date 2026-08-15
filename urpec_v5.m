@@ -236,6 +236,9 @@ config = def(config,'gradTol',0);
 % also PRINTS meanDose each iteration so convergence is auditable from
 % batch logs either way.
 config = def(config,'vcTol',0);
+% precision: 'double' (default, historical) | 'single' -- see the cast
+% at the psfFFT hoist for rationale and the safety argument.
+config = def(config,'precision','double');
 % fileSuffix: appended to every output base name so variant runs can
 % share one folder without clobbering each other (e.g. '_nn').
 config = def(config,'fileSuffix','');
@@ -700,6 +703,20 @@ progressbar('Deconvolving');
 %chakramlab fork: fft2(psf) is constant across iterations -- hoist it.
 %Bit-identical to computing it inside the loop; ~20% less FFT work.
 psfFFT=fft2(psf);
+%chakramlab fork (precision, 2026-08-14): 'single' casts the solver
+%state -- psfFFT, doseNew, shape -- so every FFT and update runs in
+%single precision: ~2x on CPU (FFTs are bandwidth-bound), half the
+%RAM, and 2-64x on GPUs (GeForce FP64 runs at 1/64 rate). Safe
+%because every tolerance dwarfs single epsilon (~1e-7): gradTol 1e-3
+%relative, clearBand 0.021, rung spacing >=0.01. Exports were single
+%already. Default 'double' = historical behavior; validate any new
+%use with a one-cell A/B expecting rung-identical class assignment.
+if strcmp(config.precision,'single')
+    psfFFT=single(psfFFT);
+    doseNew=single(doseNew);
+    shape=single(shape);
+    fprintf('*** SINGLE PRECISION solver state ***\n');
+end
 if config.useGPU
     try
         gd=gpuDevice;
