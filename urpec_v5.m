@@ -204,6 +204,15 @@ config = def(config,'clearBand',0.021);
 % diagnostic figures are drawn only on the LAST iteration in GPU mode
 % (each draw would round-trip the array over PCIe).
 config = def(config,'useGPU',0);
+% requireGPU (2026-08-15): refuse to run on the CPU. Set it on any farm
+% job that holds a GPU allocation. It errors in BOTH ways a run can end
+% up on the CPU: the card being unusable, AND useGPU never arriving at
+% the solver at all (a driver/config/path problem upstream). The second
+% case is why this exists -- a split-tone cell ran 1610 s instead of
+% ~100 s, holding a GPU the whole time, with nothing in the log to say
+% so. Failing loudly costs one wasted job; failing silently costs hours
+% per cell and can masquerade as a hardware result.
+config = def(config,'requireGPU',0);
 % edgeFree (v5, experiment 2026-08-12): erode the clearing tone's
 % penalty mask by edgeFree pixels -- the drawn boundary ring becomes
 % DON'T-CARE in the gradient objective. Rationale: holding absorbed >=
@@ -729,10 +738,21 @@ if config.useGPU
         fprintf('*** GPU PATH ACTIVE: %s, %.1f GB free ***\n',...
             gd.Name, gd.AvailableMemory/2^30);
     catch gpuErr
+        if config.requireGPU
+            error('urpec:gpuRequired',['requireGPU set but the GPU is '...
+                'unusable (%s). Refusing the CPU fallback -- this job '...
+                'holds a GPU allocation.'], gpuErr.message);
+        end
         warning('useGPU requested but unavailable (%s) -- CPU path.',...
             gpuErr.message);
         config.useGPU=0;
     end
+elseif config.requireGPU
+    %the flag never reached the solver (bad passthrough, stale driver on
+    %the path, config not carrying useGPU). Silent-CPU class of bug.
+    error('urpec:gpuRequired',['requireGPU set but useGPU=0 at the '...
+        'solver -- the GPU flag never arrived. Check the driver''s '...
+        'PASSTHROUGH list and that no stale run_urpec.m shadows it.']);
 end
 for iter=1:config.maxIter
     progressbar(iter/config.maxIter);
