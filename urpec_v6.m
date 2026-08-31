@@ -234,6 +234,7 @@ config = def(config,'edgeFree',0);
 config = def(config,'outerIters',4);
 config = def(config,'toneAvgTol',0.002);
 config = def(config,'innerIters2',60);
+config = def(config,'relCost',0);  %v6: percent-of-target objective (see gradient block)
 % gradTol (2026-08-12): ADAPTIVE STOPPING for the gradient loop. Stop
 % when the total violation changes by less than gradTol (relative)
 % over a 10-iteration window; gradIters demotes to a safety cap.
@@ -888,6 +889,23 @@ if config.gradSolver
             toneMask{tg}=isBand&(abs(shape-uWant(tg))<1e-9);
         end
         pinned=false(1,nT);
+        %v6 relCost: scale each band tone's penalty by 1/t^2 so equal
+        %RELATIVE errors cost equally -- a 0.05 miss at t=0.20 outweighs
+        %the same miss at clearing 25:1. Clearing keeps weight 1 (t=1).
+        %eta renormalizes to the stiffest pixel via the wmap machinery,
+        %so the step stays stable. NOTE: this is the importance-weight
+        %family that lost the v3c A/B -- measured here deliberately,
+        %with the principled 1/t^2 instead of an arbitrary multiplier.
+        if config.relCost
+            for tg=1:nT
+                wmap(toneMask{tg})=wmap(toneMask{tg})./ ...
+                    max(uWant(tg),0.05).^2;
+            end
+            eta=config.etaGrad./max(wmap(:));
+            fprintf('v6 relCost on: max weight %.1f
+', ...
+                gather(max(wmap(:))));
+        end
         for outer=1:config.outerIters
         nIt=config.gradIters;
         if outer>1; nIt=config.innerIters2; end
