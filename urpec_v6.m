@@ -995,8 +995,8 @@ if config.gradSolver
             break;
         end
         if outer==config.outerIters
-            fprintf('v6 outer loop: outerIters reached without tone '...
-                'convergence\n');
+            fprintf(['v6 outer loop: outerIters reached without tone '...
+                'convergence\n']);
         end
         end %outer (v6)
     end
