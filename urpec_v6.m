@@ -902,8 +902,7 @@ if config.gradSolver
                     max(uWant(tg),0.05).^2;
             end
             eta=config.etaGrad./max(wmap(:));
-            fprintf('v6 relCost on: max weight %.1f
-', ...
+            fprintf('v6 relCost on: max weight %.1f\n', ...
                 gather(max(wmap(:))));
         end
         for outer=1:config.outerIters
@@ -972,8 +971,7 @@ if config.gradSolver
             fprintf('v6 outer %d: tone want %.4f  avg %.4f  ask %.4f',...
                 outer,uWant(tg),avgT,uAsk(tg));
             if pinned(tg)||abs(miss)<=config.toneAvgTol
-                fprintf('  (ok)
-');
+                fprintf('  (ok)\n');
                 continue;
             end
             allOk=false;
@@ -990,18 +988,15 @@ if config.gradSolver
             end
             uAsk(tg)=nu;
             shapeW(toneMask{tg})=nu;
-            fprintf('  -> ask %.4f
-',nu);
+            fprintf('  -> ask %.4f\n',nu);
         end
         if allOk
-            fprintf('v6 outer loop: converged after pass %d
-',outer);
+            fprintf('v6 outer loop: converged after pass %d\n',outer);
             break;
         end
         if outer==config.outerIters
             fprintf('v6 outer loop: outerIters reached without tone '...
-                'convergence
-');
+                'convergence\n');
         end
         end %outer (v6)
     end
