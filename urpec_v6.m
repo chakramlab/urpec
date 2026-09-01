@@ -231,7 +231,9 @@ config = def(config,'requireGPU',0);
 config = def(config,'edgeFree',0);
 %v6: outer-loop knobs (see header). toneAvgTol is well under one
 %dose rung; innerIters2 is the gradient budget for warm passes 2+.
-config = def(config,'outerIters',4);
+config = def(config,'outerIters',6);  %6 not 4: floor-bound tones need the extra passes to
+%pin at ask 0 and report toneFloor (measured 2026-08-31:
+%49 of 200 grid cells ran out at 4 before pinning)
 config = def(config,'toneAvgTol',0.002);
 config = def(config,'innerIters2',60);
 config = def(config,'relCost',0);  %v6: percent-of-target objective (see gradient block)
