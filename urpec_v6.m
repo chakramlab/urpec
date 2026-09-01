@@ -237,6 +237,8 @@ config = def(config,'outerIters',6);  %6 not 4: floor-bound tones need the extra
 config = def(config,'toneAvgTol',0.002);
 config = def(config,'innerIters2',60);
 config = def(config,'relCost',0);  %v6: percent-of-target objective (see gradient block)
+config = def(config,'relCostExp',2);  %weight = 1/t^exp (1 = gentler)
+config = def(config,'relCostCap',Inf);%hard cap on the tone weight
 % gradTol (2026-08-12): ADAPTIVE STOPPING for the gradient loop. Stop
 % when the total violation changes by less than gradTol (relative)
 % over a 10-iteration window; gradIters demotes to a safety cap.
@@ -900,8 +902,9 @@ if config.gradSolver
         %with the principled 1/t^2 instead of an arbitrary multiplier.
         if config.relCost
             for tg=1:nT
-                wmap(toneMask{tg})=wmap(toneMask{tg})./ ...
-                    max(uWant(tg),0.05).^2;
+                wrel=1./max(uWant(tg),0.05).^config.relCostExp;
+                wrel=min(wrel,config.relCostCap);
+                wmap(toneMask{tg})=wmap(toneMask{tg}).*wrel;
             end
             eta=config.etaGrad./max(wmap(:));
             fprintf('v6 relCost on: max weight %.1f\n', ...
