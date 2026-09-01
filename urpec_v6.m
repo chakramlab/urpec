@@ -248,7 +248,9 @@ config = def(config,'distWeight','none'); %none|near|far (of clearing)
 config = def(config,'distAmp',7);
 config = def(config,'distLen',11);     %px (~alpha at dx=10nm)
 config = def(config,'featherAmp',0);   %graded ask near clearing; the
-config = def(config,'featherLen',11);  %predicted escape from the line
+config = def(config,'featherLen',11);
+config = def(config,'promiseRegion','tone'); %tone|bulk: where the
+config = def(config,'bulkDist',22);          %promise is MEASURED (px)  %predicted escape from the line
 config = def(config,'relCostCap',Inf);%hard cap on the tone weight
 % gradTol (2026-08-12): ADAPTIVE STOPPING for the gradient loop. Stop
 % when the total violation changes by less than gradTol (relative)
@@ -907,7 +909,9 @@ if config.gradSolver
         %loss zoo: distance-to-clearing (px), built once on CPU
         featherVec=cell(1,nT);
         for tg=1:nT; featherVec{tg}=0; end
-        if config.featherAmp>0 || ~strcmp(config.distWeight,'none')
+        toneMeas=toneMask;
+        if config.featherAmp>0 || ~strcmp(config.distWeight,'none') ...
+                || strcmp(config.promiseRegion,'bulk')
             Dpx=bwdist(gather(isClear));
             Dpx=double(Dpx);
         end
@@ -933,6 +937,21 @@ if config.gradSolver
             eta=config.etaGrad./max(wmap(:));
             fprintf('v6 distWeight %s: amp %.1f len %.0f px\n', ...
                 config.distWeight,config.distAmp,config.distLen);
+        end
+        if strcmp(config.promiseRegion,'bulk')
+            bm=Dpx>config.bulkDist;
+            if config.useGPU; bm=gpuArray(bm); end
+            for tg=1:nT
+                t2=toneMask{tg}&bm;
+                if any(t2(:))
+                    toneMeas{tg}=t2;
+                else
+                    warning(['v6: bulk promise region empty for tone '...
+                        '%d; using the full tone'],tg);
+                end
+            end
+            fprintf('v6 promiseRegion: bulk (>%.0f px from clearing)\n', ...
+                config.bulkDist);
         end
         %v6 relCost: scale each band tone's penalty by 1/t^2 so equal
         %RELATIVE errors cost equally -- a 0.05 miss at t=0.20 outweighs
@@ -1020,7 +1039,7 @@ if config.gradSolver
         %----- v6: measure tone averages, move the asks -----
         allOk=true;
         for tg=1:nT
-            avgT=gather(mean(a(toneMask{tg})));
+            avgT=gather(mean(a(toneMeas{tg})));
             miss=uWant(tg)-avgT;
             fprintf('v6 outer %d: tone want %.4f  avg %.4f  ask %.4f',...
                 outer,uWant(tg),avgT,uAsk(tg));
