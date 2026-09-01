@@ -238,6 +238,17 @@ config = def(config,'toneAvgTol',0.002);
 config = def(config,'innerIters2',60);
 config = def(config,'relCost',0);  %v6: percent-of-target objective (see gradient block)
 config = def(config,'relCostExp',2);  %weight = 1/t^exp (1 = gentler)
+%loss zoo (2026-09-01): map the flatness-vs-edge frontier beyond
+%per-tone scalar reweighting. Defaults reproduce plain v6 exactly.
+config = def(config,'bandLoss','sq');  %sq|p1|p4|huber: under-force shape
+config = def(config,'huberDelta',0.05);
+config = def(config,'bandUnderW',1);   %split-sided weights -- relCost
+config = def(config,'bandOverW',1);    %scaled BOTH; these separate them
+config = def(config,'distWeight','none'); %none|near|far (of clearing)
+config = def(config,'distAmp',7);
+config = def(config,'distLen',11);     %px (~alpha at dx=10nm)
+config = def(config,'featherAmp',0);   %graded ask near clearing; the
+config = def(config,'featherLen',11);  %predicted escape from the line
 config = def(config,'relCostCap',Inf);%hard cap on the tone weight
 % gradTol (2026-08-12): ADAPTIVE STOPPING for the gradient loop. Stop
 % when the total violation changes by less than gradTol (relative)
@@ -893,6 +904,36 @@ if config.gradSolver
             toneMask{tg}=isBand&(abs(shape-uWant(tg))<1e-9);
         end
         pinned=false(1,nT);
+        %loss zoo: distance-to-clearing (px), built once on CPU
+        featherVec=cell(1,nT);
+        for tg=1:nT; featherVec{tg}=0; end
+        if config.featherAmp>0 || ~strcmp(config.distWeight,'none')
+            Dpx=bwdist(gather(isClear));
+            Dpx=double(Dpx);
+        end
+        if config.featherAmp>0
+            feath=config.featherAmp.*exp(-Dpx./config.featherLen);
+            if config.useGPU; feath=gpuArray(feath); end
+            for tg=1:nT
+                featherVec{tg}=feath(toneMask{tg});
+                shapeW(toneMask{tg})=uAsk(tg)+featherVec{tg};
+            end
+            fprintf('v6 feather: amp %.3f len %.0f px\n', ...
+                config.featherAmp,config.featherLen);
+        end
+        if ~strcmp(config.distWeight,'none')
+            prof=exp(-Dpx./config.distLen);
+            if strcmp(config.distWeight,'near')
+                wprof=1+config.distAmp.*prof;
+            else
+                wprof=1+config.distAmp.*(1-prof);
+            end
+            if config.useGPU; wprof=gpuArray(wprof); end
+            wmap(isBand)=wmap(isBand).*wprof(isBand);
+            eta=config.etaGrad./max(wmap(:));
+            fprintf('v6 distWeight %s: amp %.1f len %.0f px\n', ...
+                config.distWeight,config.distAmp,config.distLen);
+        end
         %v6 relCost: scale each band tone's penalty by 1/t^2 so equal
         %RELATIVE errors cost equally -- a 0.05 miss at t=0.20 outweighs
         %the same miss at clearing 25:1. Clearing keeps weight 1 (t=1).
@@ -930,9 +971,17 @@ if config.gradSolver
             dphi(isClear)=-2*max(0,cb-a(isClear)) ...
                 +2*config.overBeta*max(0,a(isClear)-tmax) ...
                 +config.bandSlope*(a(isClear)>cb);
-            dphi(isBand)=-2*max(0,shapeW(isBand)-a(isBand)) ...
+            defU=max(0,shapeW(isBand)-a(isBand));
+            switch config.bandLoss
+                case 'p1',    fU=-0.4.*(defU>0);
+                case 'p4',    fU=-4.*defU.^3;
+                case 'huber', fU=-2.*min(defU,config.huberDelta);
+                otherwise,    fU=-2.*defU;
+            end
+            dphi(isBand)=config.bandUnderW.*fU ...
                 +2*max(0,a(isBand)-config.bandCeil) ...
-                +config.bandSlope*(a(isBand)>shapeW(isBand));
+                +config.bandOverW.*config.bandSlope ...
+                 .*(a(isBand)>shapeW(isBand));
             dphi(isOut)=2*config.outW*max(0,a(isOut)-config.bandCeil);
             g=ifft2(fft2(wmap.*dphi).*psfFFT);
             g=real(fftshift(g));
@@ -992,7 +1041,7 @@ if config.gradSolver
                 end
             end
             uAsk(tg)=nu;
-            shapeW(toneMask{tg})=nu;
+            shapeW(toneMask{tg})=nu+featherVec{tg};
             fprintf('  -> ask %.4f\n',nu);
         end
         if allOk
